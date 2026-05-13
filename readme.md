@@ -1,16 +1,22 @@
 # BlindSelfPortrait
 
-This repository stores work from the interactive installation "Blind Self Portrait" by Matt Mets and Kyle McDonald. It's built with [openFrameworks](http://www.openframeworks.cc/) and makes heavy use of the following addons:
+This repository now contains the current Python pipeline for converting black
+line-art images into a single continuous vector path for plotting.
 
-* [ofxFaceTracker](https://github.com/kylemcdonald/ofxFaceTracker)
-* [ofxCv](https://github.com/kylemcdonald/ofxCv)
-* [ofxPathfinder](https://github.com/kylemcdonald/ofxPathfinder/)
+## Contents
 
-And relies on the [s3g library](https://github.com/makerbot/s3g/) for communicating with a headless makerbot in realtime.
+- `continuous_vector_line.py`: dependency-light vectorization and routing pipeline.
+- `ColoringBook/`: source reference images and generated continuous-vector outputs.
 
-## Descriptions
+The old openFrameworks apps, notebook experiments, CLD binaries, and Potrace
+bundles have been removed.
 
-* BlindSelfPortrait is the app running for the installation.
-* ConnectedComponents demonstrates connected components analysis (from scratch) for labeling continuous edges.
-* EraserLine uses the ofxPathfinder addon to find a path through points in an image, and sends them over OSC to the platform.
-* CursiveRecorder and CursivePlayback were part of an earlier experiment involving automatic writing.
+## Usage
+
+```console
+python3 continuous_vector_line.py ColoringBook/chatgpt-outline.png
+```
+
+By default this writes outputs into `ColoringBook/continuous_vectors/`, including
+SVGs, reconstruction images, the fixed 10px/30% opacity render, and a flattened
+plotter path JSON.
