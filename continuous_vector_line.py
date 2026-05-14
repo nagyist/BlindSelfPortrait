@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import heapq
-import html
 import json
 import math
 import time
@@ -1717,15 +1716,6 @@ def solve_route(
     return two_opt_route(strokes, best, two_opt_seconds, connector_model)
 
 
-def path_data(points: np.ndarray, precision: int = 2) -> str:
-    if len(points) == 0:
-        return ""
-    fmt = f"{{:.{precision}f}}"
-    parts = [f"M {fmt.format(points[0, 0])} {fmt.format(points[0, 1])}"]
-    parts.extend(f"L {fmt.format(x)} {fmt.format(y)}" for x, y in points[1:])
-    return " ".join(parts)
-
-
 def oriented_points(stroke: Stroke, reversed_flag: bool) -> np.ndarray:
     return stroke.points[::-1] if reversed_flag else stroke.points
 
@@ -1761,192 +1751,6 @@ def continuous_runs(
         previous_end_id = end_id
         previous_end_point = points[-1]
     return chunks
-
-
-def write_strokes_svg(path: Path, strokes: Sequence[Stroke], size: tuple[int, int], title: str) -> None:
-    width, height = size
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
-        f"  <title>{html.escape(title)}</title>",
-        '  <rect width="100%" height="100%" fill="white"/>',
-        '  <g fill="none" stroke="black" stroke-linecap="round" stroke-linejoin="round">',
-    ]
-    for stroke in strokes:
-        stroke_width = max(1.0, stroke.median_width)
-        lines.append(
-            f'    <path d="{path_data(stroke.points)}" stroke-width="{stroke_width:.2f}"/>'
-        )
-    lines.extend(["  </g>", "</svg>"])
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def write_variable_svg(path: Path, strokes: Sequence[Stroke], size: tuple[int, int], title: str) -> None:
-    width, height = size
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
-        f"  <title>{html.escape(title)}</title>",
-        '  <rect width="100%" height="100%" fill="white"/>',
-        '  <g fill="none" stroke="black" stroke-linecap="round" stroke-linejoin="round">',
-    ]
-    for stroke_id, stroke in enumerate(strokes):
-        lines.append(f'    <g id="stroke-{stroke_id}">')
-        for i in range(len(stroke.points) - 1):
-            segment = stroke.points[i : i + 2]
-            stroke_width = max(1.0, float((stroke.widths[i] + stroke.widths[i + 1]) * 0.5))
-            lines.append(
-                f'      <path d="{path_data(segment)}" stroke-width="{stroke_width:.2f}"/>'
-            )
-        lines.append("    </g>")
-    lines.extend(["  </g>", "</svg>"])
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def write_continuous_svg(
-    path: Path,
-    strokes: Sequence[Stroke],
-    route: Route,
-    size: tuple[int, int],
-    title: str,
-    connector_model: ConnectorModel | None = None,
-) -> None:
-    width, height = size
-    all_points = continuous_points(strokes, route, connector_model)
-    median_width = float(np.median([stroke.median_width for stroke in strokes])) if strokes else 1.0
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
-        f"  <title>{html.escape(title)}</title>",
-        '  <rect width="100%" height="100%" fill="white"/>',
-        f'  <path d="{path_data(all_points)}" fill="none" stroke="black" stroke-width="{median_width:.2f}" stroke-linecap="round" stroke-linejoin="round"/>',
-        "</svg>",
-    ]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def write_route_debug_svg(
-    path: Path,
-    strokes: Sequence[Stroke],
-    route: Route,
-    size: tuple[int, int],
-    title: str,
-    connector_model: ConnectorModel | None = None,
-) -> None:
-    width, height = size
-    lines = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
-        f"  <title>{html.escape(title)}</title>",
-        '  <rect width="100%" height="100%" fill="white"/>',
-        '  <g fill="none" stroke="black" stroke-linecap="round" stroke-linejoin="round" opacity="0.9">',
-    ]
-    for index, flag in zip(route.order, route.reversed_flags):
-        stroke = strokes[index]
-        lines.append(
-            f'    <path d="{path_data(oriented_points(stroke, flag))}" stroke-width="{stroke.median_width:.2f}"/>'
-        )
-    lines.extend(
-        [
-            '  </g>',
-            '  <g fill="none" stroke="#1e80ff" stroke-width="1.15" opacity="0.55">',
-        ]
-    )
-    snapped_lines: list[str] = []
-    straight_lines: list[str] = []
-    previous_end: np.ndarray | None = None
-    previous_end_id: int | None = None
-    for index, flag in zip(route.order, route.reversed_flags):
-        start_id, end_id = stroke_endpoint_ids(index, flag)
-        points = oriented_points(strokes[index], flag)
-        if previous_end is not None and previous_end_id is not None:
-            if connector_model is None:
-                connector = np.vstack([previous_end, points[0]])
-                snapped = False
-            else:
-                connector, _, snapped = connector_model.connector_points_and_widths(
-                    previous_end_id, start_id
-                )
-            target = snapped_lines if snapped else straight_lines
-            target.append(f'    <path d="{path_data(connector)}"/>')
-        previous_end = points[-1]
-        previous_end_id = end_id
-    lines.extend(snapped_lines)
-    lines.extend(['  </g>', '  <g fill="none" stroke="#e23" stroke-width="1.35" opacity="0.72">'])
-    lines.extend(straight_lines)
-    lines.extend(["  </g>", "</svg>"])
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def draw_polyline_variable(
-    draw: ImageDraw.ImageDraw,
-    points: np.ndarray,
-    widths: np.ndarray,
-    scale: int,
-    fill: int = 0,
-) -> None:
-    if len(points) < 2:
-        return
-    scaled_points = points * scale
-    scaled_widths = widths * scale
-    for i in range(len(points) - 1):
-        p0 = tuple(scaled_points[i])
-        p1 = tuple(scaled_points[i + 1])
-        width = max(1, int(round((scaled_widths[i] + scaled_widths[i + 1]) * 0.5)))
-        draw.line([p0, p1], fill=fill, width=width)
-        radius0 = scaled_widths[i] * 0.5
-        radius1 = scaled_widths[i + 1] * 0.5
-        draw.ellipse(
-            [p0[0] - radius0, p0[1] - radius0, p0[0] + radius0, p0[1] + radius0],
-            fill=fill,
-        )
-        draw.ellipse(
-            [p1[0] - radius1, p1[1] - radius1, p1[0] + radius1, p1[1] + radius1],
-            fill=fill,
-        )
-
-
-def render_strokes(
-    strokes: Sequence[Stroke],
-    size: tuple[int, int],
-    scale: int = 2,
-    route: Route | None = None,
-    connector_model: ConnectorModel | None = None,
-) -> Image.Image:
-    width, height = size
-    canvas = Image.new("L", (width * scale, height * scale), 255)
-    draw = ImageDraw.Draw(canvas)
-
-    if route is None:
-        for stroke in strokes:
-            draw_polyline_variable(draw, stroke.points, stroke.widths, scale)
-    else:
-        previous_end: np.ndarray | None = None
-        previous_width: float | None = None
-        previous_end_id: int | None = None
-        for index, flag in zip(route.order, route.reversed_flags):
-            start_id, end_id = stroke_endpoint_ids(index, flag)
-            stroke = strokes[index]
-            points = oriented_points(stroke, flag)
-            widths = stroke.widths[::-1] if flag else stroke.widths
-            if previous_end is not None and previous_width is not None and previous_end_id is not None:
-                if connector_model is None:
-                    connector = np.vstack([previous_end, points[0]])
-                    connector_width = np.asarray([previous_width, widths[0]], dtype=np.float64)
-                else:
-                    connector, connector_width, _ = connector_model.connector_points_and_widths(
-                        previous_end_id, start_id
-                    )
-                draw_polyline_variable(draw, connector, connector_width, scale, fill=0)
-            draw_polyline_variable(draw, points, widths, scale, fill=0)
-            previous_end = points[-1]
-            previous_width = float(widths[-1])
-            previous_end_id = end_id
-
-    if scale != 1:
-        resample = getattr(Image, "Resampling", Image).LANCZOS
-        canvas = canvas.resize((width, height), resample)
-    return canvas
 
 
 def compact_polyline(points: np.ndarray, tolerance: float = 1e-9) -> np.ndarray:
@@ -1996,34 +1800,6 @@ def render_fixed_opacity_runs(
         resample = getattr(Image, "Resampling", Image).LANCZOS
         canvas = canvas.resize((width, height), resample)
     return canvas.convert("RGB")
-
-
-def diff_metrics(original_gray: np.ndarray, rendered: Image.Image, threshold: int) -> dict[str, float]:
-    rendered_array = np.asarray(rendered, dtype=np.uint8)
-    diff = np.abs(original_gray.astype(np.int16) - rendered_array.astype(np.int16))
-    original_ink = original_gray < threshold
-    rendered_ink = rendered_array < 240
-    intersection = int(np.logical_and(original_ink, rendered_ink).sum())
-    union = int(np.logical_or(original_ink, rendered_ink).sum())
-    return {
-        "mae": float(diff.mean()),
-        "rmse": float(np.sqrt((diff.astype(np.float64) ** 2).mean())),
-        "max_abs_error": float(diff.max()),
-        "ink_iou": float(intersection / union) if union else 1.0,
-        "ink_recall": float(intersection / original_ink.sum()) if original_ink.any() else 1.0,
-        "ink_precision": float(intersection / rendered_ink.sum()) if rendered_ink.any() else 1.0,
-    }
-
-
-def write_overlay(path: Path, original_gray: np.ndarray, rendered: Image.Image, threshold: int) -> None:
-    rendered_array = np.asarray(rendered, dtype=np.uint8)
-    original_ink = original_gray < threshold
-    rendered_ink = rendered_array < 240
-    overlay = np.full((*original_gray.shape, 3), 255, dtype=np.uint8)
-    overlay[original_ink & rendered_ink] = (0, 0, 0)
-    overlay[original_ink & ~rendered_ink] = (230, 40, 40)
-    overlay[~original_ink & rendered_ink] = (35, 110, 230)
-    Image.fromarray(overlay, mode="RGB").save(path)
 
 
 def route_connector_records(
@@ -2092,82 +1868,6 @@ def stroke_to_json(stroke: Stroke) -> dict[str, object]:
         "points": np.round(stroke.points, 3).tolist(),
         "widths": np.round(stroke.widths, 3).tolist(),
     }
-
-
-def write_plotter_path_json(
-    path: Path,
-    image_path: Path,
-    vectors_json_path: Path,
-    continuous_svg_path: Path,
-    render_path: Path,
-    raw_points: np.ndarray,
-    size: tuple[int, int],
-    route_mode: str,
-    start_mode: str,
-    requested_start_point: dict[str, float],
-    actual_start_point: list[float] | None,
-    route: Route,
-    connectors: dict[str, float | int],
-    avoid_strength: float,
-    retrace_weight: float,
-    snap_max_ratio: float,
-    snap_cost_ratio: float,
-) -> None:
-    width, height = size
-    points = compact_polyline(raw_points)
-    center = np.asarray([width * 0.5, height * 0.5], dtype=np.float64)
-    if len(points):
-        start_distance = float(np.linalg.norm(points[0] - center))
-        start_point = np.round(points[0], 3).tolist()
-    else:
-        start_distance = 0.0
-        start_point = None
-    payload = {
-        "format": "blind_contour_single_polyline_v1",
-        "source_image": str(image_path),
-        "source_vectors_json": str(vectors_json_path),
-        "source_continuous_svg": str(continuous_svg_path),
-        "source_render_png": str(render_path),
-        "width": width,
-        "height": height,
-        "coordinate_system": {
-            "origin": "top-left",
-            "x_axis": "right",
-            "y_axis": "down",
-            "units": "source image pixels",
-        },
-        "render_style_that_produced_png": {
-            "stroke_width_px": 10,
-            "opacity": 0.30,
-            "compositing": "one transparent layer per routed stroke/connector run",
-            "vertex_dots": False,
-        },
-        "path": {
-            "type": "polyline",
-            "closed": False,
-            "point_count": int(len(points)),
-            "raw_svg_point_count": int(len(raw_points)),
-            "length_px": polyline_length(points),
-            "start_point": start_point,
-            "start_distance_from_center_px": start_distance,
-            "points": np.round(points, 3).tolist(),
-        },
-        "route_metadata": {
-            "stroke_count": len(route.order),
-            "connector_count": int(connectors["connector_count"]),
-            "snapped_connector_count": int(connectors["snapped_connector_count"]),
-            "straight_connector_count": int(connectors["straight_connector_count"]),
-            "route_mode": route_mode,
-            "start_mode": start_mode,
-            "requested_start_point": requested_start_point,
-            "actual_start_point": actual_start_point,
-            "avoid_strength": avoid_strength,
-            "retrace_weight": retrace_weight,
-            "snap_max_ratio": snap_max_ratio,
-            "snap_cost_ratio": snap_cost_ratio,
-        },
-    }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def process_image(
@@ -2255,12 +1955,6 @@ def process_image(
     stem = image_path.stem
     size = (width, height)
 
-    reconstruction = render_strokes(strokes, size, scale=render_scale)
-    continuous = render_strokes(
-        strokes, size, scale=render_scale, route=route, connector_model=connector_model
-    )
-    reconstruction_metrics = diff_metrics(gray, reconstruction, used_threshold)
-    continuous_metrics = diff_metrics(gray, continuous, used_threshold)
     connector_records = route_connector_records(strokes, route, connector_model)
     connectors = connector_summary(connector_records)
     routed_runs = continuous_runs(strokes, route, connector_model)
@@ -2269,6 +1963,7 @@ def process_image(
         if routed_runs
         else np.empty((0, 2), dtype=np.float64)
     )
+    continuous_path_points = compact_polyline(routed_points)
     actual_start_point = (
         np.round(oriented_points(strokes[route.order[0]], route.reversed_flags[0])[0], 3).tolist()
         if route.order
@@ -2279,42 +1974,13 @@ def process_image(
         "y": float(height * 0.5),
     }
 
-    reconstruction_path = out_dir / f"{stem}_reconstruction.png"
-    continuous_path = out_dir / f"{stem}_continuous.png"
     continuous_fixed_path = out_dir / f"{stem}_continuous_fixed_10px_30pct_nodots.png"
-    overlay_path = out_dir / f"{stem}_overlay.png"
-    continuous_overlay_path = out_dir / f"{stem}_continuous_overlay.png"
-    strokes_svg_path = out_dir / f"{stem}_strokes.svg"
-    variable_svg_path = out_dir / f"{stem}_variable_width.svg"
-    continuous_svg_path = out_dir / f"{stem}_continuous.svg"
-    route_debug_svg_path = out_dir / f"{stem}_route_debug.svg"
     json_path = out_dir / f"{stem}_vectors.json"
-    plotter_json_path = out_dir / f"{stem}_continuous_fixed_10px_30pct_nodots_path.json"
 
-    reconstruction.save(reconstruction_path)
-    continuous.save(continuous_path)
-    render_fixed_opacity_runs(routed_runs, size, stroke_width=10.0, opacity=0.30).save(
+    render_fixed_opacity_runs(
+        routed_runs, size, stroke_width=10.0, opacity=0.30, scale=render_scale
+    ).save(
         continuous_fixed_path
-    )
-    write_overlay(overlay_path, gray, reconstruction, used_threshold)
-    write_overlay(continuous_overlay_path, gray, continuous, used_threshold)
-    write_strokes_svg(strokes_svg_path, strokes, size, f"{image_path.name} centerline strokes")
-    write_variable_svg(variable_svg_path, strokes, size, f"{image_path.name} variable-width strokes")
-    write_continuous_svg(
-        continuous_svg_path,
-        strokes,
-        route,
-        size,
-        f"{image_path.name} routed continuous path",
-        connector_model=connector_model,
-    )
-    write_route_debug_svg(
-        route_debug_svg_path,
-        strokes,
-        route,
-        size,
-        f"{image_path.name} route debug",
-        connector_model=connector_model,
     )
 
     route_indices = [
@@ -2355,8 +2021,14 @@ def process_image(
         "connector_to_stroke_ratio": float(route.connector_length / total_stroke_length)
         if total_stroke_length
         else 0.0,
-        "reconstruction_metrics": reconstruction_metrics,
-        "continuous_metrics": continuous_metrics,
+        "continuous_path": {
+            "type": "polyline",
+            "closed": False,
+            "point_count": int(len(continuous_path_points)),
+            "raw_point_count": int(len(routed_points)),
+            "length": polyline_length(continuous_path_points),
+            "points": np.round(continuous_path_points, 3).tolist(),
+        },
         "timings": {
             "width_map_seconds": width_map_seconds,
             "thinning_seconds": thinning_seconds,
@@ -2366,42 +2038,14 @@ def process_image(
             "total_seconds": elapsed,
         },
         "outputs": {
-            "reconstruction_png": str(reconstruction_path),
-            "continuous_png": str(continuous_path),
-            "continuous_fixed_10px_30pct_nodots_png": str(continuous_fixed_path),
-            "overlay_png": str(overlay_path),
-            "continuous_overlay_png": str(continuous_overlay_path),
-            "strokes_svg": str(strokes_svg_path),
-            "variable_width_svg": str(variable_svg_path),
-            "continuous_svg": str(continuous_svg_path),
-            "route_debug_svg": str(route_debug_svg_path),
             "vectors_json": str(json_path),
-            "plotter_path_json": str(plotter_json_path),
+            "continuous_fixed_10px_30pct_nodots_png": str(continuous_fixed_path),
         },
         "route": route_indices,
         "connector_records": connector_records,
         "strokes": [stroke_to_json(stroke) for stroke in strokes],
     }
     json_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
-    write_plotter_path_json(
-        plotter_json_path,
-        image_path=image_path,
-        vectors_json_path=json_path,
-        continuous_svg_path=continuous_svg_path,
-        render_path=continuous_fixed_path,
-        raw_points=routed_points,
-        size=size,
-        route_mode=route_mode,
-        start_mode=start_mode,
-        requested_start_point=requested_start_point,
-        actual_start_point=actual_start_point,
-        route=route,
-        connectors=connectors,
-        avoid_strength=avoid_strength,
-        retrace_weight=retrace_weight,
-        snap_max_ratio=snap_max_ratio,
-        snap_cost_ratio=snap_cost_ratio,
-    )
     return result
 
 
@@ -2421,14 +2065,14 @@ def parse_args() -> argparse.Namespace:
         "inputs",
         nargs="*",
         type=Path,
-        default=[Path("ColoringBook")],
+        default=[Path("input-coloring")],
         help="Image files or directories to process.",
     )
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("ColoringBook/continuous_vectors"),
-        help="Directory for SVG, PNG, overlay, and JSON outputs.",
+        default=Path("output-vectors"),
+        help="Directory for the vectors JSON and fixed-opacity PNG outputs.",
     )
     parser.add_argument("--threshold", type=int, default=None, help="Ink threshold. Defaults to Otsu plus offset.")
     parser.add_argument("--threshold-offset", type=int, default=85, help="Added to Otsu threshold when --threshold is omitted.")
@@ -2436,7 +2080,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--smooth-passes", type=int, default=0, help="Centerline smoothing passes before simplification.")
     parser.add_argument("--min-length", type=float, default=4.0, help="Drop skeleton fragments shorter than this many pixels.")
     parser.add_argument("--min-width", type=float, default=1.4, help="Minimum rendered vector stroke width.")
-    parser.add_argument("--render-scale", type=int, default=2, help="Supersampling scale for PNG renders.")
+    parser.add_argument("--render-scale", type=int, default=4, help="Supersampling scale for the fixed-opacity PNG render.")
     parser.add_argument(
         "--width-mode",
         choices=("erosion", "edt"),
@@ -2525,7 +2169,6 @@ def main() -> int:
         print("No input images found.")
         return 2
 
-    summary: list[dict[str, object]] = []
     for image_path in image_paths:
         print(f"Processing {image_path}...", flush=True)
         result = process_image(
@@ -2552,26 +2195,11 @@ def main() -> int:
             raster_min_projection_fraction=max(0.0, args.raster_min_projection_fraction),
             start_mode=args.start_mode,
         )
-        summary.append(
-            {
-                "source": result["source"],
-                "stroke_count": result["stroke_count"],
-                "point_count": result["point_count"],
-                "connector_length": result["connector_length"],
-                "connectors": result["connectors"],
-                "connector_to_stroke_ratio": result["connector_to_stroke_ratio"],
-                "reconstruction_metrics": result["reconstruction_metrics"],
-                "continuous_metrics": result["continuous_metrics"],
-                "timings": result["timings"],
-                "outputs": result["outputs"],
-            }
-        )
         timings = result["timings"]
-        reconstruction = result["reconstruction_metrics"]
         print(
             "  strokes={stroke_count} points={point_count} connector_cost={connector_length:.1f} "
             "snapped={snapped}/{connectors} straight_max={straight_max:.1f} "
-            "ratio={connector_to_stroke_ratio:.3f} iou={iou:.3f} time={time:.2f}s".format(
+            "ratio={connector_to_stroke_ratio:.3f} time={time:.2f}s".format(
                 stroke_count=result["stroke_count"],
                 point_count=result["point_count"],
                 connector_length=result["connector_length"],
@@ -2579,17 +2207,12 @@ def main() -> int:
                 connectors=result["connectors"]["connector_count"],
                 straight_max=result["connectors"]["straight_connector_max_length"],
                 connector_to_stroke_ratio=result["connector_to_stroke_ratio"],
-                iou=reconstruction["ink_iou"],
                 time=timings["total_seconds"],
             )
             ,
             flush=True,
         )
 
-    summary_path = args.out_dir / "summary.json"
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    print(f"Wrote {summary_path}", flush=True)
     return 0
 
 
