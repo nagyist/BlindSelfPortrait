@@ -910,6 +910,28 @@ def weighted_straight_cost(
     return length * (1.0 + avoid_strength * avoid), length
 
 
+def weighted_straight_matrices(
+    endpoint_positions: np.ndarray,
+    bounds: tuple[float, float, float, float],
+    avoid_strength: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    delta = endpoint_positions[None, :, :] - endpoint_positions[:, None, :]
+    straight_length = np.sqrt((delta * delta).sum(axis=2))
+    if avoid_strength <= 0:
+        return straight_length.copy(), straight_length
+
+    samples = np.linspace(0.1, 0.9, 9, dtype=np.float64)
+    sampled_points = endpoint_positions[:, None, None, :] + delta[:, :, None, :] * samples[
+        None, None, :, None
+    ]
+    avoid = face_avoidance_values(sampled_points.reshape(-1, 2), bounds).reshape(
+        len(endpoint_positions), len(endpoint_positions), len(samples)
+    )
+    straight_cost = straight_length * (1.0 + avoid_strength * avoid.mean(axis=2))
+    np.fill_diagonal(straight_cost, 0.0)
+    return straight_cost, straight_length
+
+
 def dilate_mask(mask: np.ndarray, iterations: int) -> np.ndarray:
     out = mask.astype(bool).copy()
     for _ in range(max(0, iterations)):
@@ -1110,15 +1132,9 @@ def build_connector_model(
     )
     bounds = bounds_from_strokes(strokes, size)
 
-    straight_cost = np.zeros((endpoint_count, endpoint_count), dtype=np.float64)
-    straight_length = np.zeros((endpoint_count, endpoint_count), dtype=np.float64)
-    for i in range(endpoint_count):
-        for j in range(i + 1, endpoint_count):
-            cost, length = weighted_straight_cost(
-                endpoint_positions[i], endpoint_positions[j], bounds, avoid_strength
-            )
-            straight_cost[i, j] = straight_cost[j, i] = cost
-            straight_length[i, j] = straight_length[j, i] = length
+    straight_cost, straight_length = weighted_straight_matrices(
+        endpoint_positions, bounds, avoid_strength
+    )
 
     graph_length = np.full((endpoint_count, endpoint_count), math.inf, dtype=np.float64)
     for i, node in enumerate(endpoint_nodes):
@@ -1893,6 +1909,7 @@ def process_image(
     raster_projection_distance: float,
     raster_min_projection_fraction: float,
     start_mode: str,
+    skip_render: bool,
 ) -> dict[str, object]:
     started = time.monotonic()
     gray = load_grayscale(image_path)
@@ -1977,11 +1994,12 @@ def process_image(
     continuous_fixed_path = out_dir / f"{stem}_continuous_fixed_10px_30pct_nodots.png"
     json_path = out_dir / f"{stem}_vectors.json"
 
-    render_fixed_opacity_runs(
-        routed_runs, size, stroke_width=10.0, opacity=0.30, scale=render_scale
-    ).save(
-        continuous_fixed_path
-    )
+    if not skip_render:
+        render_fixed_opacity_runs(
+            routed_runs, size, stroke_width=10.0, opacity=0.30, scale=render_scale
+        ).save(
+            continuous_fixed_path
+        )
 
     route_indices = [
         {"stroke": int(index), "reversed": bool(flag)}
@@ -2039,7 +2057,9 @@ def process_image(
         },
         "outputs": {
             "vectors_json": str(json_path),
-            "continuous_fixed_10px_30pct_nodots_png": str(continuous_fixed_path),
+            "continuous_fixed_10px_30pct_nodots_png": str(continuous_fixed_path)
+            if not skip_render
+            else None,
         },
         "route": route_indices,
         "connector_records": connector_records,
@@ -2081,6 +2101,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-length", type=float, default=4.0, help="Drop skeleton fragments shorter than this many pixels.")
     parser.add_argument("--min-width", type=float, default=1.4, help="Minimum rendered vector stroke width.")
     parser.add_argument("--render-scale", type=int, default=4, help="Supersampling scale for the fixed-opacity PNG render.")
+    parser.add_argument("--skip-render", action="store_true", help="Write vector JSON without rendering the preview PNG.")
     parser.add_argument(
         "--width-mode",
         choices=("erosion", "edt"),
@@ -2194,6 +2215,7 @@ def main() -> int:
             raster_projection_distance=max(0.0, args.raster_projection_distance),
             raster_min_projection_fraction=max(0.0, args.raster_min_projection_fraction),
             start_mode=args.start_mode,
+            skip_render=args.skip_render,
         )
         timings = result["timings"]
         print(
